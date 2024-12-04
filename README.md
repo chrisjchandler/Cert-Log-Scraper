@@ -4,7 +4,7 @@
 This tool connects to CertStream, a real-time feed of newly issued SSL/TLS certificates, and monitors for any new certificates that match domain names in the specified zones. The tool captures and logs relevant certificate information and writes any matches to an output file for further review and analysis.
 
 ## How It Works
-1. **Load Zones**: The tool first loads a list of domains/zones from a `zones.json` file. These domains represent the zones that are under management and require monitoring.
+1. **Load Zones**: The tool first loads a list of domains/zones from a `zones.json` file. These domains represent the zones that and require monitoring.
 
 2. **Connect to CertStream**: The tool connects to CertStream, a real-time feed of new SSL/TLS certificates, to receive a continuous stream of certificate updates.
 
@@ -14,7 +14,7 @@ This tool connects to CertStream, a real-time feed of newly issued SSL/TLS certi
 
 ## Features
 - **Real-Time Monitoring**: Connects to the CertStream API to receive and process certificate updates in real-time.
-- **Domain Matching**: Matches new certificates against zones under our management to detect potential rogue certificates.
+- **Domain Matching**: Matches new certificates against zones to detect potential rogue certificates.
 - **Data Logging**: Captures information such as certificate issuer, validity period, and matching domains, which is then saved to `output.json`.
 - **Automatic Reconnection**: Automatically reconnects to CertStream if the connection drops, ensuring continuous monitoring.
 
