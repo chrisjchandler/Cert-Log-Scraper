@@ -1,97 +1,172 @@
 package main
 
 import (
-	"encoding/json"
-	"fmt"
-	"io/ioutil"
-	"log"
-	"net/http"
-	"os"
+    "encoding/json"
+    "github.com/CaliDog/certstream-go"
+    "io/ioutil"
+    "log"
+    "os"
+    "strings"
+    "time"
 )
 
-type CTLog struct {
-	Description string `json:"description"`
-	LogID       string `json:"log_id"`
-	Key         string `json:"key"`
-	URL         string `json:"url"`
-	MMD         int    `json:"mmd"`
-	State       LogState `json:"state"`
+// Struct to store the zone information
+type Zone struct {
+    Name string
 }
 
-type LogState struct {
-	Usable   *Timestamp `json:"usable,omitempty"`
-	Rejected *Timestamp `json:"rejected,omitempty"`
-	Retired  *Timestamp `json:"retired,omitempty"`
+// Struct to store the certificate information
+type CertInfo struct {
+    Index                int      `json:"index"`
+    AllDomains           []string `json:"all_domains"`
+    CertLink             string   `json:"cert_link"`
+    AuthorityInfoAccess  string   `json:"authorityInfoAccess"`
+    SubjectAltName       string   `json:"subjectAltName"`
+    IssuerCN             string   `json:"issuer_cn"`
+    NotBefore            string   `json:"not_before"`
+    NotAfter             string   `json:"not_after"`
+    LogSourceName        string   `json:"log_source_name"`
+    LogSourceURL         string   `json:"log_source_url"`
+    UpdateType           string   `json:"update_type"`
+    MessageType          string   `json:"message_type"`
 }
 
-type Timestamp struct {
-	Timestamp string `json:"timestamp"`
+func loadZones(filePath string) ([]string, error) {
+    data, err := ioutil.ReadFile(filePath)
+    if err != nil {
+        return nil, err
+    }
+
+    var zones []string
+    err = json.Unmarshal(data, &zones)
+    if err != nil {
+        return nil, err
+    }
+
+    return zones, nil
 }
 
-type CTLogList struct {
-	Operators []Operator `json:"operators"`
+func monitorCertStream(zones []string, outputFile string) {
+    // Infinite loop to ensure reconnection on EOF or other errors
+    for {
+        log.Println("Connecting to CertStream...")
+        stream, errStream := certstream.CertStreamEventStream(false)
+
+        for {
+            select {
+            case event := <-stream:
+                // Access fields using `event` directly since `event` is of type `jsonq.JsonQuery`
+                messageType, err := event.String("message_type")
+                if err != nil {
+                    log.Printf("Error extracting message_type: %v", err)
+                    continue
+                }
+
+                if messageType == "certificate_update" {
+                    certData, err := event.Interface("data", "leaf_cert", "all_domains")
+                    if err != nil {
+                        log.Printf("Error extracting certificate data: %v", err)
+                        continue
+                    }
+
+                    allDomains, ok := certData.([]interface{})
+                    if !ok {
+                        log.Printf("Unexpected type for all_domains: %T", certData)
+                        continue
+                    }
+
+                    matchedDomains := []string{}
+                    for _, domain := range allDomains {
+                        domainStr, ok := domain.(string)
+                        if !ok {
+                            continue
+                        }
+                        for _, zone := range zones {
+                            if strings.Contains(domainStr, zone) {
+                                matchedDomains = append(matchedDomains, domainStr)
+                                break
+                            }
+                        }
+                    }
+
+                    if len(matchedDomains) > 0 {
+                        log.Printf("Match found: %v", matchedDomains)
+
+                        // Extract additional fields
+                        certIndex, _ := event.Int("data", "cert_index")
+                        certLink, _ := event.String("data", "cert_link")
+                        authorityInfoAccess, _ := event.String("data", "leaf_cert", "extensions", "authorityInfoAccess")
+                        subjectAltName, _ := event.String("data", "leaf_cert", "extensions", "subjectAltName")
+                        issuerCN, _ := event.String("data", "leaf_cert", "issuer", "CN")
+                        notBeforeInt, _ := event.Int("data", "leaf_cert", "not_before")
+                        notAfterInt, _ := event.Int("data", "leaf_cert", "not_after")
+                        logSourceName, _ := event.String("data", "source", "name")
+                        logSourceURL, _ := event.String("data", "source", "url")
+                        updateType, _ := event.String("update_type")
+
+                        // Convert Unix timestamps to human-readable format
+                        notBefore := time.Unix(int64(notBeforeInt), 0).Format(time.RFC3339)
+                        notAfter := time.Unix(int64(notAfterInt), 0).Format(time.RFC3339)
+
+                        certInfo := CertInfo{
+                            Index:               certIndex,
+                            CertLink:            certLink,
+                            AllDomains:          matchedDomains,
+                            AuthorityInfoAccess: authorityInfoAccess,
+                            SubjectAltName:      subjectAltName,
+                            IssuerCN:            issuerCN,
+                            NotBefore:           notBefore,
+                            NotAfter:            notAfter,
+                            LogSourceName:       logSourceName,
+                            LogSourceURL:        logSourceURL,
+                            UpdateType:          updateType,
+                            MessageType:         messageType,
+                        }
+
+                        // Append to output.json
+                        appendToOutputFile(certInfo, outputFile)
+                    }
+                }
+
+            case err := <-errStream:
+                log.Printf("Error reading message from CertStream: %v", err)
+                log.Println("Attempting to reconnect after 5 seconds...")
+                time.Sleep(5 * time.Second)
+                break
+            }
+        }
+    }
 }
 
-type Operator struct {
-	Name string `json:"name"`
-	Logs []CTLog `json:"logs"`
+func appendToOutputFile(data CertInfo, outputFile string) {
+    file, err := os.OpenFile(outputFile, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+    if err != nil {
+        log.Printf("Error opening output file: %v", err)
+        return
+    }
+    defer file.Close()
+
+    jsonData, err := json.Marshal(data)
+    if err != nil {
+        log.Printf("Error marshaling data: %v", err)
+        return
+    }
+
+    _, err = file.WriteString(string(jsonData) + "\n")
+    if err != nil {
+        log.Printf("Error writing to output file: %v", err)
+    }
 }
 
 func main() {
-	filePath := "all_logs_list.json"
-	file, err := os.Open(filePath)
-	if err != nil {
-		log.Fatalf("Error opening file: %v", err)
-	}
-	defer file.Close()
+    const zonesFile = "zones.json"
+    const outputFile = "output.json"
 
-	byteValue, err := ioutil.ReadAll(file)
-	if err != nil {
-		log.Fatalf("Error reading file: %v", err)
-	}
+    zones, err := loadZones(zonesFile)
+    if err != nil {
+        log.Fatalf("Error loading zones: %v", err)
+    }
 
-	var logList CTLogList
-	err = json.Unmarshal(byteValue, &logList)
-	if err != nil {
-		log.Fatalf("Error parsing CT log list: %v", err)
-	}
-
-	for _, operator := range logList.Operators {
-		fmt.Printf("Operator: %s\n", operator.Name)
-		for _, log := range operator.Logs {
-			fmt.Printf("\tLog Description: %s\n", log.Description)
-			fmt.Printf("\tLog URL: %s\n", log.URL)
-			if log.State.Usable != nil {
-				fmt.Printf("\tLog Usable Since: %s\n", log.State.Usable.Timestamp)
-			}
-			if log.State.Rejected != nil {
-				fmt.Printf("\tLog Rejected Since: %s\n", log.State.Rejected.Timestamp)
-			}
-			if log.State.Retired != nil {
-				fmt.Printf("\tLog Retired Since: %s\n", log.State.Retired.Timestamp)
-			}
-		}
-	}
-}
-
-func fetchCTLog(logURL string) {
-	response, err := http.Get(logURL)
-	if err != nil {
-		log.Printf("Error fetching CT log from %s: %v", logURL, err)
-		return
-	}
-	defer response.Body.Close()
-
-	if response.StatusCode != http.StatusOK {
-		log.Printf("Non-OK HTTP status: %d", response.StatusCode)
-		return
-	}
-
-	body, err := ioutil.ReadAll(response.Body)
-	if err != nil {
-		log.Printf("Error reading response body: %v", err)
-		return
-	}
-
-	fmt.Printf("Fetched data from %s:\n%s\n", logURL, string(body))
+    log.Println("Loaded zones from zones.json:", zones)
+    monitorCertStream(zones, outputFile)
 }
