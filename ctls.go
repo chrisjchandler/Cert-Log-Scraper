@@ -18,13 +18,16 @@ type Zone struct {
 // Struct to store the certificate information
 type CertInfo struct {
     Index                int      `json:"index"`
-    AllDomains           []string `json:"all_domains"`
     CertLink             string   `json:"cert_link"`
+    AllDomains           []string `json:"all_domains"`
+    SerialNumber         string   `json:"serial_number"`
     AuthorityInfoAccess  string   `json:"authorityInfoAccess"`
     SubjectAltName       string   `json:"subjectAltName"`
     IssuerCN             string   `json:"issuer_cn"`
+    IssuerOU             string   `json:"issuer_ou"`
     NotBefore            string   `json:"not_before"`
     NotAfter             string   `json:"not_after"`
+    Seen                 string   `json:"seen"`
     LogSourceName        string   `json:"log_source_name"`
     LogSourceURL         string   `json:"log_source_url"`
     UpdateType           string   `json:"update_type"`
@@ -98,25 +101,32 @@ func monitorCertStream(zones []string, outputFile string) {
                         authorityInfoAccess, _ := event.String("data", "leaf_cert", "extensions", "authorityInfoAccess")
                         subjectAltName, _ := event.String("data", "leaf_cert", "extensions", "subjectAltName")
                         issuerCN, _ := event.String("data", "leaf_cert", "issuer", "CN")
+                        issuerOU, _ := event.String("data", "leaf_cert", "issuer", "OU")
                         notBeforeInt, _ := event.Int("data", "leaf_cert", "not_before")
                         notAfterInt, _ := event.Int("data", "leaf_cert", "not_after")
+                        seenFloat, _ := event.Float("data", "seen")
                         logSourceName, _ := event.String("data", "source", "name")
                         logSourceURL, _ := event.String("data", "source", "url")
                         updateType, _ := event.String("update_type")
+                        serialNumber, _ := event.String("data", "leaf_cert", "serial_number")
 
                         // Convert Unix timestamps to human-readable format
                         notBefore := time.Unix(int64(notBeforeInt), 0).Format(time.RFC3339)
                         notAfter := time.Unix(int64(notAfterInt), 0).Format(time.RFC3339)
+                        seen := time.Unix(int64(seenFloat), 0).Format(time.RFC3339)
 
                         certInfo := CertInfo{
                             Index:               certIndex,
                             CertLink:            certLink,
                             AllDomains:          matchedDomains,
+                            SerialNumber:        serialNumber,
                             AuthorityInfoAccess: authorityInfoAccess,
                             SubjectAltName:      subjectAltName,
                             IssuerCN:            issuerCN,
+                            IssuerOU:            issuerOU,
                             NotBefore:           notBefore,
                             NotAfter:            notAfter,
+                            Seen:                seen,
                             LogSourceName:       logSourceName,
                             LogSourceURL:        logSourceURL,
                             UpdateType:          updateType,
@@ -146,7 +156,7 @@ func appendToOutputFile(data CertInfo, outputFile string) {
     }
     defer file.Close()
 
-    jsonData, err := json.Marshal(data)
+    jsonData, err := json.MarshalIndent(data, "", "  ")
     if err != nil {
         log.Printf("Error marshaling data: %v", err)
         return
