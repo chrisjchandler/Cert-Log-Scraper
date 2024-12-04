@@ -1,8 +1,5 @@
 # CertStream Monitor Tool
 
-## Purpose Statement
-This tool is designed to monitor and analyze new SSL/TLS certificates created for domains within zones under our management. Its primary function is to detect and alert on any unauthorized (rogue) certificates that may have been issued for these zones, thereby ensuring enhanced security for our managed domains.
-
 ## Overview
 This tool connects to CertStream, a real-time feed of newly issued SSL/TLS certificates, and monitors for any new certificates that match domain names in the specified zones. The tool captures and logs relevant certificate information and writes any matches to an output file for further review and analysis.
 
